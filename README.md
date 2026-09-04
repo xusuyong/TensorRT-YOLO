@@ -110,6 +110,7 @@ cd TensorRT-YOLO
 ```bash
 pip install "pybind11[global]" # 安装 pybind11，用于生成 Python 绑定
 cmake -S . -B build -D TRT_PATH=/your/tensorrt/dir -D BUILD_PYTHON=ON -D CMAKE_INSTALL_PREFIX=/your/tensorrt-yolo/install/dir
+cmake -S . -B build -D TRT_PATH=/usr/src/tensorrt -D BUILD_PYTHON=ON -D CMAKE_INSTALL_PREFIX=/home/xsy/cppcode/TensorRT-YOLO/tensorrt-yolo_install_dir
 cmake --build build -j$(nproc) --config Release --target install
 ```
 

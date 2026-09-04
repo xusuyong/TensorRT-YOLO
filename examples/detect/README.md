@@ -41,6 +41,14 @@ trtexec --onnx=models/yolo11n-trtyolo.onnx --saveEngine=models/yolo11n.engine --
 ### 使用 C++ 进行推理
 
 1. 确保已按照项目文档对项目进行编译。
+
+    如果没安装opencv，可以执行以下命令安装：
+
+    ```sh
+    sudo apt update
+    sudo apt install libopencv-dev
+    ```
+
 2. 将 `detect.cpp` 编译为可执行文件：
 
     ```bash
