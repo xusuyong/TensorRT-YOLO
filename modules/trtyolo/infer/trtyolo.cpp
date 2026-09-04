@@ -8,6 +8,7 @@
  *
  */
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <cstring>
@@ -404,6 +405,134 @@ public:
         return result;
     }
 
+    // SemanticModel 的后处理方法实现
+    SemanticRes postProcessSemantic(int idx, int orig_width, int orig_height) {
+        auto& tensor_info = backend_->tensor_infos[1];
+
+        int net_h    = 0;
+        int net_w    = 0;
+        int channels = 1;
+
+        if (tensor_info.shape.nbDims == 3) {
+            net_h    = tensor_info.shape.d[1];
+            net_w    = tensor_info.shape.d[2];
+            channels = 1;
+        } else if (tensor_info.shape.nbDims == 4) {
+            channels = tensor_info.shape.d[1];
+            net_h    = tensor_info.shape.d[2];
+            net_w    = tensor_info.shape.d[3];
+        } else {
+            throw std::runtime_error("Unexpected output tensor dimensions for semantic segmentation: " +
+                                     std::to_string(tensor_info.shape.nbDims));
+        }
+
+        auto& transform = backend_->infer_config.input_shape.has_value()
+                              ? backend_->transforms.front()
+                              : backend_->transforms[idx];
+
+        // 缩放比例以适配可能与网络输入尺寸不一致的输出特征图（通常一致）
+        float scale_w = static_cast<float>(net_w) / backend_->max_shape.w;
+        float scale_h = static_cast<float>(net_h) / backend_->max_shape.z;
+
+        int cur_valid_w  = std::max(1, static_cast<int>(std::round(transform.meta.x * scale_w)));
+        int cur_valid_h  = std::max(1, static_cast<int>(std::round(transform.meta.y * scale_h)));
+        int cur_offset_x = static_cast<int>(std::round(transform.meta.z * scale_w));
+        int cur_offset_y = static_cast<int>(std::round(transform.meta.w * scale_h));
+
+        SemanticRes result;
+        result.width  = orig_width;
+        result.height = orig_height;
+        result.mask.resize(orig_width * orig_height);
+
+        // 预计算 X 轴最近邻映射表
+        std::vector<int> map_x(orig_width);
+        for (int x = 0; x < orig_width; ++x) {
+            int sx   = cur_offset_x + static_cast<int>(x * cur_valid_w / orig_width);
+            map_x[x] = std::clamp(sx, 0, net_w - 1);
+        }
+
+        bool   class_present[256]    = {false};
+        size_t batch_offset_elements = static_cast<size_t>(idx) * channels * net_h * net_w;
+
+        if (tensor_info.dtype() == nvinfer1::DataType::kUINT8) {
+            const uint8_t* out_ptr = static_cast<const uint8_t*>(tensor_info.buffer->host()) + batch_offset_elements;
+            for (int y = 0; y < orig_height; ++y) {
+                int            sy       = cur_offset_y + static_cast<int>(y * cur_valid_h / orig_height);
+                sy                      = std::clamp(sy, 0, net_h - 1);
+                const uint8_t* row_src  = out_ptr + sy * net_w;
+                uint8_t*       dst_row  = result.mask.data() + y * orig_width;
+                for (int x = 0; x < orig_width; ++x) {
+                    uint8_t cls        = row_src[map_x[x]];
+                    dst_row[x]         = cls;
+                    class_present[cls] = true;
+                }
+            }
+        } else if (tensor_info.dtype() == nvinfer1::DataType::kINT32) {
+            const int32_t* out_ptr = static_cast<const int32_t*>(tensor_info.buffer->host()) + batch_offset_elements;
+            for (int y = 0; y < orig_height; ++y) {
+                int            sy       = cur_offset_y + static_cast<int>(y * cur_valid_h / orig_height);
+                sy                      = std::clamp(sy, 0, net_h - 1);
+                const int32_t* row_src  = out_ptr + sy * net_w;
+                uint8_t*       dst_row  = result.mask.data() + y * orig_width;
+                for (int x = 0; x < orig_width; ++x) {
+                    uint8_t cls        = static_cast<uint8_t>(row_src[map_x[x]]);
+                    dst_row[x]         = cls;
+                    class_present[cls] = true;
+                }
+            }
+        } else if (tensor_info.dtype() == nvinfer1::DataType::kFLOAT) {
+            const float* out_ptr = static_cast<const float*>(tensor_info.buffer->host()) + batch_offset_elements;
+            if (channels == 1) {
+                for (int y = 0; y < orig_height; ++y) {
+                    int          sy      = cur_offset_y + static_cast<int>(y * cur_valid_h / orig_height);
+                    sy                   = std::clamp(sy, 0, net_h - 1);
+                    const float* row_src = out_ptr + sy * net_w;
+                    uint8_t*     dst_row = result.mask.data() + y * orig_width;
+                    for (int x = 0; x < orig_width; ++x) {
+                        uint8_t cls        = static_cast<uint8_t>(std::round(row_src[map_x[x]]));
+                        dst_row[x]         = cls;
+                        class_present[cls] = true;
+                    }
+                }
+            } else {
+                // channels > 1: logits
+                size_t plane_size = static_cast<size_t>(net_h) * net_w;
+                for (int y = 0; y < orig_height; ++y) {
+                    int      sy      = cur_offset_y + static_cast<int>(y * cur_valid_h / orig_height);
+                    sy               = std::clamp(sy, 0, net_h - 1);
+                    uint8_t* dst_row = result.mask.data() + y * orig_width;
+                    for (int x = 0; x < orig_width; ++x) {
+                        int    sx          = map_x[x];
+                        size_t spatial_idx = sy * net_w + sx;
+                        int    best_c      = 0;
+                        float  max_val     = out_ptr[spatial_idx];
+                        for (int c = 1; c < channels; ++c) {
+                            float val = out_ptr[c * plane_size + spatial_idx];
+                            if (val > max_val) {
+                                max_val = val;
+                                best_c  = c;
+                            }
+                        }
+                        uint8_t cls        = static_cast<uint8_t>(best_c);
+                        dst_row[x]         = cls;
+                        class_present[cls] = true;
+                    }
+                }
+            }
+        } else {
+            throw std::runtime_error("Unsupported data type for semantic segmentation output");
+        }
+
+        for (int c = 0; c < 256; ++c) {
+            if (class_present[c]) {
+                result.classes.push_back(c);
+            }
+        }
+        result.num = static_cast<int>(result.classes.size());
+
+        return result;
+    }
+
 private:
     std::unique_ptr<TrtBackend> backend_;           // < TensorRT 后端
     unsigned long long          total_request_{0};  // < 总请求数
@@ -567,6 +696,35 @@ std::vector<PoseRes> PoseModel::predict(const std::vector<Image>& images) {
 }
 
 PoseRes PoseModel::predict(const Image& image) {
+    return predict(std::vector<Image>{image}).front();
+}
+
+SemanticModel::SemanticModel()  = default;
+SemanticModel::~SemanticModel() = default;
+
+SemanticModel::SemanticModel(const std::string& trt_engine_file, const InferOption& infer_option)
+    : BaseModel(trt_engine_file, infer_option) {}
+
+std::unique_ptr<SemanticModel> SemanticModel::clone() const {
+    auto clone_model   = std::make_unique<SemanticModel>();
+    clone_model->impl_ = impl_->clone();
+    return clone_model;
+}
+
+std::vector<SemanticRes> SemanticModel::predict(const std::vector<Image>& images) {
+    auto processImages = [this, &images](size_t num) -> std::vector<SemanticRes> {
+        std::vector<SemanticRes> results(num);
+        for (size_t idx = 0; idx < num; ++idx) {
+            results[idx] = this->impl_->postProcessSemantic(idx, images[idx].width, images[idx].height);
+        }
+        return results;
+    };
+
+    // withPerformanceReport
+    return impl_->withPerformanceReport<decltype(processImages), std::vector<SemanticRes>>(images, processImages);
+}
+
+SemanticRes SemanticModel::predict(const Image& image) {
     return predict(std::vector<Image>{image}).front();
 }
 

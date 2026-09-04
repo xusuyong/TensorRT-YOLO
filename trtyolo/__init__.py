@@ -90,6 +90,7 @@ class TRTYOLO:
             "segment": C.model.SegmentModel,
             "pose": C.model.PoseModel,
             "obb": C.model.OBBModel,
+            "semantic": C.model.SemanticModel,
         }
 
     @property
@@ -225,6 +226,8 @@ def convert_to_sv(result: C.result.BaseRes, img_shape: Tuple[int, int]) -> Union
             class_id=result.class_id,
             confidence=result.confidence,
         )
+    elif hasattr(C.result, "SemanticRes") and isinstance(result, C.result.SemanticRes):
+        return result.mask
     else:
         raise ValueError(f"Unknown result type: {type(result)}")
 

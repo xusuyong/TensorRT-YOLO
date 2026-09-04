@@ -224,6 +224,13 @@ public:
     std::unique_ptr<BaseBuffer> buffer;  // < 张量对应的内存
 
     /**
+     * @brief 获取张量数据类型
+     *
+     * @return nvinfer1::DataType
+     */
+    nvinfer1::DataType dtype() const { return dtype_; }
+
+    /**
      * @brief 构造函数，初始化张量信息
      *
      * @param name 张量名称

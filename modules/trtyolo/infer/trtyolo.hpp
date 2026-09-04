@@ -383,6 +383,42 @@ struct TRTYOLOAPI PoseRes : public BaseRes {
 };
 
 /**
+ * @brief 语义分割结果结构体，继承自基础结果结构体，增加掩码和尺寸信息
+ */
+struct TRTYOLOAPI SemanticRes : public BaseRes {
+    int                  width  = 0;  // < 掩码宽度（与输入原图宽度一致）
+    int                  height = 0;  // < 掩码高度（与输入原图高度一致）
+    std::vector<uint8_t> mask;        // < 语义分割类别掩码（每个像素对应类别ID）
+
+    /**
+     * @brief 默认构造函数
+     *
+     */
+    SemanticRes() = default;
+
+    /**
+     * @brief 构造函数，初始化语义分割结果的尺寸、掩码和类别
+     *
+     * @param width 掩码宽度
+     * @param height 掩码高度
+     * @param mask 掩码数据
+     * @param classes 出现的类别列表
+     */
+    SemanticRes(int width, int height, const std::vector<uint8_t>& mask, const std::vector<int>& classes = {})
+        : BaseRes(static_cast<int>(classes.size()), classes, {}), width(width), height(height), mask(mask) {}
+
+    friend std::ostream& operator<<(std::ostream& os, const SemanticRes& res) {
+        os << "SemanticRes(\n    width=" << res.width << ",\n    height=" << res.height
+           << ",\n    num_classes=" << res.num << ",\n    classes=[";
+        for (const auto& c : res.classes) os << c << ", ";
+        os << "],\n    mask_size=" << res.mask.size() << "\n)";
+        return os;
+    }
+};
+
+using SemanticSegmentRes = SemanticRes;
+
+/**
  * @brief 推理选项配置类
  */
 class TRTYOLOAPI InferOption {
@@ -677,5 +713,45 @@ public:
      */
     std::vector<PoseRes> predict(const std::vector<Image>& images);
 };
+
+class TRTYOLOAPI SemanticModel : public BaseModel {
+public:
+    // 私有的无参构造函数，仅在 clone 方法中使用
+    SemanticModel();
+    ~SemanticModel();
+
+    /**
+     * @brief 构造一个新的 SemanticModel 对象
+     *
+     * @param trt_engine_file TensorRT 引擎文件路径
+     * @param infer_option 推理选项
+     */
+    explicit SemanticModel(const std::string& trt_engine_file, const InferOption& infer_option);
+
+    /**
+     * @brief 克隆 SemanticModel 对象
+     *
+     * @return 克隆后的 SemanticModel 对象的智能指针
+     */
+    std::unique_ptr<SemanticModel> clone() const;
+
+    /**
+     * @brief 对单张图像进行推理
+     *
+     * @param image 输入图像
+     * @return 推理结果
+     */
+    SemanticRes predict(const Image& image);
+
+    /**
+     * @brief 对多张图像进行推理
+     *
+     * @param images 输入图像向量
+     * @return 推理结果向量
+     */
+    std::vector<SemanticRes> predict(const std::vector<Image>& images);
+};
+
+using SemanticSegmentModel = SemanticModel;
 
 }  // namespace trtyolo

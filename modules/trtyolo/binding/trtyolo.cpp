@@ -42,6 +42,8 @@ void bind_result(py::module& m, const std::string& result_name) {
         docstring = "A class representing instance segmentation results containing bounding boxes, segmentation masks, predicted classes and their confidence scores.";
     } else if constexpr (std::is_same_v<ResultType, trtyolo::PoseRes>) {
         docstring = "A class representing pose estimation results containing bounding boxes, keypoints, predicted classes and their confidence scores.";
+    } else if constexpr (std::is_same_v<ResultType, trtyolo::SemanticRes>) {
+        docstring = "A class representing semantic segmentation results containing class mask, dimensions and detected classes.";
     }
 
     py::class_<ResultType, trtyolo::BaseRes> cls(m, result_name.c_str(), docstring.c_str());
@@ -135,6 +137,24 @@ void bind_result(py::module& m, const std::string& result_name) {
                                   "each composed of m equally-sized sets of keypoints and confidence scores of each keypoint. "
                                   "Where each point is [x, y] if c is 2, or [x, y, conf] if c is 3.");
     }
+
+    if constexpr (std::is_same_v<ResultType, trtyolo::SemanticRes>) {
+        cls.def_property_readonly("width", [](const ResultType& r) { return r.width; }, "Mask width.");
+        cls.def_property_readonly("height", [](const ResultType& r) { return r.height; }, "Mask height.");
+        cls.def_property_readonly("mask", [](const ResultType& r) -> py::array {
+            if (r.mask.empty()) return py::array_t<uint8_t>();
+            auto* owner = new std::vector<uint8_t>(r.mask);
+            return py::array(
+                py::buffer_info(
+                    owner->data(),
+                    sizeof(uint8_t),
+                    py::format_descriptor<uint8_t>::format(),
+                    2,
+                    std::vector<size_t>{static_cast<size_t>(r.height), static_cast<size_t>(r.width)},
+                    std::vector<size_t>{sizeof(uint8_t) * r.width, sizeof(uint8_t)}),
+                py::cast(owner));
+        }, "An array of shape (H, W) containing per-pixel class IDs.");
+    }
 };
 
 /**
@@ -152,9 +172,10 @@ void bind_result(py::module& m, const std::string& result_name) {
  * - OBBRes: 旋转目标检测结果
  * - SegmentRes: 实例分割结果(带掩码)
  * - PoseRes: 人体姿态估计结果(带关键点)
+ * - SemanticRes: 语义分割结果(类别掩码)
  */
 void binding_result_module(py::module& m) {
-    m.doc() = "Result module of trtyolo, providing Python bindings for various computer vision result types including classification, object detection, rotated object detection, instance segmentation and pose estimation.";
+    m.doc() = "Result module of trtyolo, providing Python bindings for various computer vision result types including classification, object detection, rotated object detection, instance segmentation, pose estimation, and semantic segmentation.";
 
     // 基础结果类，所有结果类型的基类，提供通用功能和属性
     py::class_<trtyolo::BaseRes>(m, "BaseRes", "A base class for all result types, providing common properties like number of results, class IDs, and confidence scores.")
@@ -164,11 +185,11 @@ void binding_result_module(py::module& m) {
         .def_property_readonly("class_id", [](const trtyolo::BaseRes& r) -> py::array { return py::array(
                                                                                             py::buffer_info(
                                                                                                 const_cast<int*>(r.classes.data()),
-                                                                                                sizeof(int),
-                                                                                                py::format_descriptor<int>::format(),
-                                                                                                1,
-                                                                                                {r.classes.size()},
-                                                                                                {sizeof(int)})); }, "An array of shape (n,) containing the class IDs of the detections.")
+                                                                                                 sizeof(int),
+                                                                                                 py::format_descriptor<int>::format(),
+                                                                                                 1,
+                                                                                                 {r.classes.size()},
+                                                                                                 {sizeof(int)})); }, "An array of shape (n,) containing the class IDs of the detections.")
         // 检测对象的置信度分数数组
         .def_property_readonly("confidence", [](const trtyolo::BaseRes& r) -> py::array { return py::array(
                                                                                               py::buffer_info(
@@ -185,6 +206,7 @@ void binding_result_module(py::module& m) {
     bind_result<trtyolo::OBBRes>(m, "OBBRes");            // 旋转目标检测结果
     bind_result<trtyolo::SegmentRes>(m, "SegmentRes");    // 实例分割结果(带掩码)
     bind_result<trtyolo::PoseRes>(m, "PoseRes");          // 人体姿态估计结果(带关键点)
+    bind_result<trtyolo::SemanticRes>(m, "SemanticRes");  // 语义分割结果(类别掩码)
 }
 
 /**
@@ -290,6 +312,7 @@ void binding_model_module(py::module& m) {
     bind_model<trtyolo::OBBModel>(m, "OBBModel");
     bind_model<trtyolo::SegmentModel>(m, "SegmentModel");
     bind_model<trtyolo::PoseModel>(m, "PoseModel");
+    bind_model<trtyolo::SemanticModel>(m, "SemanticModel");
 }
 
 /**
