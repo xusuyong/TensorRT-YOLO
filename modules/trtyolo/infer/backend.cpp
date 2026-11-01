@@ -157,6 +157,7 @@ void TrtBackend::captureCudaGraph() {
                 max_shape.z,
                 transforms.front().meta,
                 infer_config.config,
+                max_shape.y,
                 max_shape.x,
                 stream);
         } else {
@@ -173,6 +174,7 @@ void TrtBackend::captureCudaGraph() {
                     max_shape.z,
                     transforms[idx].meta,
                     infer_config.config,
+                    max_shape.y,
                     stream);
             }
         }
@@ -347,6 +349,7 @@ void TrtBackend::dynamicInfer(const std::vector<Image>& inputs) {
                 max_shape.z,
                 transforms.front().meta,
                 infer_config.config,
+                max_shape.y,
                 stream);
         }
     } else {
@@ -388,6 +391,7 @@ void TrtBackend::dynamicInfer(const std::vector<Image>& inputs) {
                     max_shape.z,
                     transforms[idx].meta,
                     infer_config.config,
+                    max_shape.y,
                     stream);
                 input_device += input_sizes[idx];
             }
@@ -404,6 +408,7 @@ void TrtBackend::dynamicInfer(const std::vector<Image>& inputs) {
                     max_shape.z,
                     transforms[idx].meta,
                     infer_config.config,
+                    max_shape.y,
                     stream);
             }
         }

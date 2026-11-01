@@ -63,7 +63,7 @@ struct Transform {
  */
 void cudaLetterbox(const void* src, const int src_cols, const int src_rows, const size_t src_pitch,
                    void* dst, const int dst_cols, const int dst_rows, const int4 meta,
-                   const ProcessConfig config, cudaStream_t stream);
+                   const ProcessConfig config, int channels, cudaStream_t stream);
 
 /**
  * @brief 使用 CUDA 对多张图像应用 Letterbox 缩放和归一化。
@@ -80,11 +80,12 @@ void cudaLetterbox(const void* src, const int src_cols, const int src_rows, cons
  * @param dst_rows 输出图像的高度
  * @param meta 变换元数据，包含有效宽度、有效高度、偏移量 X、偏移量 Y
  * @param config 处理配置参数，如插值方法、边界处理等
+ * @param channels 图像通道数 (1: 灰度单通道, 3: 彩色三通道)
  * @param num_images 图像数量，即 `src` 和 `dst` 数组的长度
  * @param stream 用于异步执行的 CUDA 流
  */
 void cudaMultiLetterbox(const void* src, const int src_cols, const int src_rows, const size_t src_pitch,
                         void* dst, const int dst_cols, const int dst_rows, const int4 meta,
-                        const ProcessConfig config, int num_images, cudaStream_t stream);
+                        const ProcessConfig config, int channels, int num_images, cudaStream_t stream);
 
 }  // namespace trtyolo

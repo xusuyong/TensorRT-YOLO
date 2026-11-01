@@ -180,6 +180,10 @@ public:
         return backend_->max_shape.x;
     }
 
+    size_t channels() const {
+        return backend_->max_shape.y;
+    }
+
     // 装饰器函数
     template <typename Func, typename ReturnType>
     ReturnType withPerformanceReport(const std::vector<Image>& images, Func func) {
@@ -548,6 +552,10 @@ BaseModel::BaseModel(const std::string& trt_engine_file, const InferOption& infe
 
 int BaseModel::batch() const {
     return impl_->batch();
+}
+
+int BaseModel::channels() const {
+    return static_cast<int>(impl_->channels());
 }
 
 std::tuple<std::string, std::string, std::string> BaseModel::performanceReport() {

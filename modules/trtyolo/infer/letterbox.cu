@@ -18,6 +18,7 @@ inline __device__ __host__ int iDivUp(int a, int b) {
     return (a % b != 0) ? (a / b + 1) : (a / b);
 }
 
+template <int CHANNELS>
 __device__ void letterbox(
     const uint8_t* __restrict__ src, const int src_cols, const int src_rows, const size_t src_pitch,
     float* __restrict__ dst, const int dst_cols, const int dst_rows, const int4 meta,
@@ -47,58 +48,92 @@ __device__ void letterbox(
             if (px >= dst_cols) continue;
 
             const bool in_roi = !((px < offset_x) | (px >= vx_end) | (py < offset_y) | (py >= vy_end));
-            float3     pixel  = make_float3(config.border_value, config.border_value, config.border_value);
 
-            if (in_roi) {
-                const float sx = __fmaf_rn(px - offset_x + 0.5f, scale_x, -0.5f);
-                const float sy = __fmaf_rn(py - offset_y + 0.5f, scale_y, -0.5f);
+            if constexpr (CHANNELS == 1) {
+                float pixel = config.border_value;
 
-                const int x0 = max(0, min(__float2int_rd(sx), src_cols - 2));
-                const int y0 = max(0, min(__float2int_rd(sy), src_rows - 2));
-                const int x1 = x0 + 1;
-                const int y1 = y0 + 1;
+                if (in_roi) {
+                    const float sx = __fmaf_rn(px - offset_x + 0.5f, scale_x, -0.5f);
+                    const float sy = __fmaf_rn(py - offset_y + 0.5f, scale_y, -0.5f);
 
-                const float a   = sx - x0;
-                const float b   = sy - y0;
-                const float w00 = (1.0f - a) * (1.0f - b);
-                const float w10 = a * (1.0f - b);
-                const float w01 = (1.0f - a) * b;
-                const float w11 = a * b;
+                    const int x0 = max(0, min(__float2int_rd(sx), src_cols - 2));
+                    const int y0 = max(0, min(__float2int_rd(sy), src_rows - 2));
+                    const int x1 = x0 + 1;
+                    const int y1 = y0 + 1;
 
-                const uint8_t* __restrict__ p00 = src + y0 * src_pitch + x0 * 3;
-                const uint8_t* __restrict__ p10 = src + y0 * src_pitch + x1 * 3;
-                const uint8_t* __restrict__ p01 = src + y1 * src_pitch + x0 * 3;
-                const uint8_t* __restrict__ p11 = src + y1 * src_pitch + x1 * 3;
+                    const float a   = sx - x0;
+                    const float b   = sy - y0;
+                    const float w00 = (1.0f - a) * (1.0f - b);
+                    const float w10 = a * (1.0f - b);
+                    const float w01 = (1.0f - a) * b;
+                    const float w11 = a * b;
 
-                pixel.x = fmaf(w00, __ldg(p00), fmaf(w10, __ldg(p10), fmaf(w01, __ldg(p01), w11 * __ldg(p11))));
-                pixel.y = fmaf(w00, __ldg(p00 + 1), fmaf(w10, __ldg(p10 + 1), fmaf(w01, __ldg(p01 + 1), w11 * __ldg(p11 + 1))));
-                pixel.z = fmaf(w00, __ldg(p00 + 2), fmaf(w10, __ldg(p10 + 2), fmaf(w01, __ldg(p01 + 2), w11 * __ldg(p11 + 2))));
+                    const uint8_t* __restrict__ p00 = src + y0 * src_pitch + x0;
+                    const uint8_t* __restrict__ p10 = src + y0 * src_pitch + x1;
+                    const uint8_t* __restrict__ p01 = src + y1 * src_pitch + x0;
+                    const uint8_t* __restrict__ p11 = src + y1 * src_pitch + x1;
+
+                    pixel = fmaf(w00, __ldg(p00), fmaf(w10, __ldg(p10), fmaf(w01, __ldg(p01), w11 * __ldg(p11))));
+                }
+
+                float* out = (float*)dst + py * dst_cols + px;
+                out[0]     = pixel * config.alpha.x + config.beta.x;
+            } else {
+                float3 pixel = make_float3(config.border_value, config.border_value, config.border_value);
+
+                if (in_roi) {
+                    const float sx = __fmaf_rn(px - offset_x + 0.5f, scale_x, -0.5f);
+                    const float sy = __fmaf_rn(py - offset_y + 0.5f, scale_y, -0.5f);
+
+                    const int x0 = max(0, min(__float2int_rd(sx), src_cols - 2));
+                    const int y0 = max(0, min(__float2int_rd(sy), src_rows - 2));
+                    const int x1 = x0 + 1;
+                    const int y1 = y0 + 1;
+
+                    const float a   = sx - x0;
+                    const float b   = sy - y0;
+                    const float w00 = (1.0f - a) * (1.0f - b);
+                    const float w10 = a * (1.0f - b);
+                    const float w01 = (1.0f - a) * b;
+                    const float w11 = a * b;
+
+                    const uint8_t* __restrict__ p00 = src + y0 * src_pitch + x0 * 3;
+                    const uint8_t* __restrict__ p10 = src + y0 * src_pitch + x1 * 3;
+                    const uint8_t* __restrict__ p01 = src + y1 * src_pitch + x0 * 3;
+                    const uint8_t* __restrict__ p11 = src + y1 * src_pitch + x1 * 3;
+
+                    pixel.x = fmaf(w00, __ldg(p00), fmaf(w10, __ldg(p10), fmaf(w01, __ldg(p01), w11 * __ldg(p11))));
+                    pixel.y = fmaf(w00, __ldg(p00 + 1), fmaf(w10, __ldg(p10 + 1), fmaf(w01, __ldg(p01 + 1), w11 * __ldg(p11 + 1))));
+                    pixel.z = fmaf(w00, __ldg(p00 + 2), fmaf(w10, __ldg(p10 + 2), fmaf(w01, __ldg(p01 + 2), w11 * __ldg(p11 + 2))));
+                }
+
+                if (config.swap_rb) {
+                    float temp = pixel.x;
+                    pixel.x    = pixel.z;
+                    pixel.z    = temp;
+                }
+
+                float* out                   = (float*)dst + py * dst_cols + px;
+                out[0]                       = pixel.x * config.alpha.x + config.beta.x;
+                out[dst_cols * dst_rows]     = pixel.y * config.alpha.y + config.beta.y;
+                out[2 * dst_cols * dst_rows] = pixel.z * config.alpha.z + config.beta.z;
             }
-
-            if (config.swap_rb) {
-                float temp = pixel.x;
-                pixel.x    = pixel.z;
-                pixel.z    = temp;
-            }
-
-            float* out                   = (float*)dst + py * dst_cols + px;
-            out[0]                       = pixel.x * config.alpha.x + config.beta.x;
-            out[dst_cols * dst_rows]     = pixel.y * config.alpha.y + config.beta.y;
-            out[2 * dst_cols * dst_rows] = pixel.z * config.alpha.z + config.beta.z;
         }
     }
 }
 
+template <int CHANNELS>
 __global__ void gpuLetterbox(const void* __restrict__ src, const int src_cols, const int src_rows, const size_t src_pitch,
                              void* __restrict__ dst, const int dst_cols, const int dst_rows, const int4 meta, const ProcessConfig config) {
     int element_x = blockDim.x * blockIdx.x + threadIdx.x;
     int element_y = blockDim.y * blockIdx.y + threadIdx.y;
 
-    letterbox(static_cast<const uint8_t*>(src), src_cols, src_rows, src_pitch,
-              static_cast<float*>(dst), dst_cols, dst_rows, meta, config,
-              element_x, element_y);
+    letterbox<CHANNELS>(static_cast<const uint8_t*>(src), src_cols, src_rows, src_pitch,
+                        static_cast<float*>(dst), dst_cols, dst_rows, meta, config,
+                        element_x, element_y);
 }
 
+template <int CHANNELS>
 __global__ void gpuMutliLetterbox(const void* __restrict__ src, const int src_cols, const int src_rows, const size_t src_pitch,
                                   void* __restrict__ dst, const int dst_cols, const int dst_rows, const int4 meta, const ProcessConfig config,
                                   int num_images) {
@@ -108,12 +143,12 @@ __global__ void gpuMutliLetterbox(const void* __restrict__ src, const int src_co
     int element_x = blockDim.x * blockIdx.x + threadIdx.x;
     int element_y = blockDim.y * blockIdx.y + threadIdx.y;
 
-    letterbox(static_cast<const uint8_t*>(src) + image_idx * src_rows * src_pitch,
-              src_cols, src_rows, src_pitch,
-              static_cast<float*>(dst) + image_idx * dst_rows * dst_cols * 3,
-              dst_cols, dst_rows,
-              meta, config,
-              element_x, element_y);
+    letterbox<CHANNELS>(static_cast<const uint8_t*>(src) + image_idx * src_rows * src_pitch,
+                        src_cols, src_rows, src_pitch,
+                        static_cast<float*>(dst) + image_idx * dst_rows * dst_cols * CHANNELS,
+                        dst_cols, dst_rows,
+                        meta, config,
+                        element_x, element_y);
 }
 
 void Transform::update(int src_width, int src_height, int dst_width, int dst_height) {
@@ -136,20 +171,28 @@ void Transform::apply(float x, float y, float* transformed_x, float* transformed
 
 void cudaLetterbox(const void* src, const int src_cols, const int src_rows, const size_t src_pitch,
                    void* dst, const int dst_cols, const int dst_rows,
-                   const int4 meta, const ProcessConfig config, cudaStream_t stream) {
+                   const int4 meta, const ProcessConfig config, int channels, cudaStream_t stream) {
     // launch kernel
     const dim3 blockDim(16, 16);
     const dim3 gridDim(iDivUp(dst_cols, blockDim.x * 2), iDivUp(dst_rows, blockDim.y * 2));
-    gpuLetterbox<<<gridDim, blockDim, 0, stream>>>(src, src_cols, src_rows, src_pitch, dst, dst_cols, dst_rows, meta, config);
+    if (channels == 1) {
+        gpuLetterbox<1><<<gridDim, blockDim, 0, stream>>>(src, src_cols, src_rows, src_pitch, dst, dst_cols, dst_rows, meta, config);
+    } else {
+        gpuLetterbox<3><<<gridDim, blockDim, 0, stream>>>(src, src_cols, src_rows, src_pitch, dst, dst_cols, dst_rows, meta, config);
+    }
 }
 
 void cudaMultiLetterbox(const void* src, const int src_cols, const int src_rows, const size_t src_pitch,
                         void* dst, const int dst_cols, const int dst_rows,
-                        const int4 meta, const ProcessConfig config, int num_images, cudaStream_t stream) {
+                        const int4 meta, const ProcessConfig config, int channels, int num_images, cudaStream_t stream) {
     // launch kernel
     const dim3 blockDim(16, 16);
     const dim3 gridDim(iDivUp(dst_cols, blockDim.x * 2), iDivUp(dst_rows, blockDim.y * 2), num_images);
-    gpuMutliLetterbox<<<gridDim, blockDim, 0, stream>>>(src, src_cols, src_rows, src_pitch, dst, dst_cols, dst_rows, meta, config, num_images);
+    if (channels == 1) {
+        gpuMutliLetterbox<1><<<gridDim, blockDim, 0, stream>>>(src, src_cols, src_rows, src_pitch, dst, dst_cols, dst_rows, meta, config, num_images);
+    } else {
+        gpuMutliLetterbox<3><<<gridDim, blockDim, 0, stream>>>(src, src_cols, src_rows, src_pitch, dst, dst_cols, dst_rows, meta, config, num_images);
+    }
 }
 
 }  // namespace trtyolo

@@ -513,6 +513,13 @@ public:
     int batch() const;
 
     /**
+     * @brief 获取输入通道数
+     *
+     * @return 输入通道数 (如 1 为灰度图，3 为彩色图)
+     */
+    int channels() const;
+
+    /**
      * @brief 获取性能报告
      *
      * @return 包含吞吐量、CPU延迟和GPU延迟的元组
