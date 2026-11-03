@@ -293,8 +293,8 @@ struct __align__(1 * sizeof(T)) RotatedBoxCenterSize
         float add_a1_a2 = matrix1.a + matrix2.a;
         float add_b1_b2 = matrix1.b + matrix2.b;
         float add_c1_c2 = matrix1.c + matrix2.c;
-        float sub_x1_x2 = a.x - b.x;
-        float sub_y1_y2 = a.y - b.y;
+        float sub_x1_x2 = float(a.x) - float(b.x);
+        float sub_y1_y2 = float(a.y) - float(b.y);
         float sub_data = (add_a1_a2 * add_b1_b2) - (add_c1_c2 * add_c1_c2);
         sub_data = fmaxf(sub_data, 1e-7f);
 
