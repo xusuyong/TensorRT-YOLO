@@ -82,21 +82,88 @@ void TrtBackend::getTensorInfo() {
         auto        shape = manager_->getTensorShape(name.c_str());
         auto        dtype = manager_->getTensorDataType(name.c_str());
         bool        input = (manager_->getTensorIOMode(name.c_str()) == nvinfer1::TensorIOMode::kINPUT);
-
-        if (input) {
-            dynamic = std::any_of(shape.d, shape.d + shape.nbDims, [](int val) { return val == -1; });
-            if (dynamic) {
-                shape     = manager_->getProfileShape(name.c_str(), 0, nvinfer1::OptProfileSelector::kMIN);
-                min_shape = make_int4(shape.d[0], shape.d[1], shape.d[2], shape.d[3]);
-                shape     = manager_->getProfileShape(name.c_str(), 0, nvinfer1::OptProfileSelector::kMAX);
-                // < 打印接受范围
-            }
-            max_shape = make_int4(shape.d[0], shape.d[1], shape.d[2], shape.d[3]);
-        } else if (!input && dynamic) {
-            shape.d[0] = max_shape.x;
-        }
         tensor_infos.emplace_back(name, shape, dtype, input, input ? BufferType::Device : buffer_type_);
     }
+
+    // 确定输入张量：按名称绑定，语义兜底，不再假设 front() 就是输入
+    input_tensor_index_ = -1;
+    auto to_lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return s;
+    };
+
+    // 1. 优先按常用输入名称匹配 (images / image / input / data)
+    const std::vector<std::string> input_names = {"images", "image", "input", "data"};
+    for (size_t i = 0; i < tensor_infos.size(); ++i) {
+        if (!tensor_infos[i].input) continue;
+        std::string lower_name = to_lower(tensor_infos[i].name);
+        for (const auto& kw : input_names) {
+            if (lower_name.find(kw) != std::string::npos) {
+                input_tensor_index_ = static_cast<int>(i);
+                break;
+            }
+        }
+        if (input_tensor_index_ >= 0) break;
+    }
+
+    // 2. 名称对不上时，按语义兜底推断: input == true 且 rank == 4 [B, C, H, W]
+    if (input_tensor_index_ < 0) {
+        for (size_t i = 0; i < tensor_infos.size(); ++i) {
+            if (tensor_infos[i].input && tensor_infos[i].shape.nbDims == 4) {
+                input_tensor_index_ = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+
+    // 3. 兜底: 首个 input == true 的张量
+    if (input_tensor_index_ < 0) {
+        for (size_t i = 0; i < tensor_infos.size(); ++i) {
+            if (tensor_infos[i].input) {
+                input_tensor_index_ = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+
+    // 4. 极端兜底: 0 号张量
+    if (input_tensor_index_ < 0 && !tensor_infos.empty()) {
+        input_tensor_index_ = 0;
+    }
+
+    if (input_tensor_index_ >= 0) {
+        auto& in_t = tensor_infos[input_tensor_index_];
+        auto shape = in_t.shape;
+        dynamic = std::any_of(shape.d, shape.d + shape.nbDims, [](int val) { return val == -1; });
+        if (dynamic) {
+            shape     = manager_->getProfileShape(in_t.name.c_str(), 0, nvinfer1::OptProfileSelector::kMIN);
+            min_shape = make_int4(shape.d[0], shape.d[1], shape.d[2], shape.d[3]);
+            shape     = manager_->getProfileShape(in_t.name.c_str(), 0, nvinfer1::OptProfileSelector::kMAX);
+        }
+        max_shape = make_int4(shape.d[0], shape.d[1], shape.d[2], shape.d[3]);
+
+        for (auto& t : tensor_infos) {
+            if (!t.input && dynamic) {
+                t.shape.d[0] = max_shape.x;
+            }
+        }
+    }
+}
+
+TensorInfo& TrtBackend::getInputTensorInfo() {
+    if (input_tensor_index_ >= 0 && input_tensor_index_ < static_cast<int>(tensor_infos.size())) {
+        return tensor_infos[input_tensor_index_];
+    }
+    if (!tensor_infos.empty()) return tensor_infos.front();
+    throw std::runtime_error("TrtBackend: No tensor available for getInputTensorInfo.");
+}
+
+const TensorInfo& TrtBackend::getInputTensorInfo() const {
+    if (input_tensor_index_ >= 0 && input_tensor_index_ < static_cast<int>(tensor_infos.size())) {
+        return tensor_infos[input_tensor_index_];
+    }
+    if (!tensor_infos.empty()) return tensor_infos.front();
+    throw std::runtime_error("TrtBackend: No tensor available for getInputTensorInfo.");
 }
 
 void TrtBackend::initialize() {
@@ -139,7 +206,7 @@ void TrtBackend::captureCudaGraph() {
     auto calculate_input_size_and_device = [&](int idx, int input_width, int input_height) {
         size_t input_size   = input_height * input_width * max_shape.y;
         void*  input_device = static_cast<uint8_t*>(inputs_buffer_->device()) + idx * input_size;
-        void*  infer_device = static_cast<float*>(tensor_infos.front().buffer->device()) + idx * infer_size_;
+        void*  infer_device = static_cast<float*>(getInputTensorInfo().buffer->device()) + idx * infer_size_;
         return std::make_pair(input_device, infer_device);
     };
 
@@ -152,7 +219,7 @@ void TrtBackend::captureCudaGraph() {
                 input_width,
                 input_height,
                 input_width * max_shape.y,
-                tensor_infos.front().buffer->device(),
+                getInputTensorInfo().buffer->device(),
                 max_shape.w,
                 max_shape.z,
                 transforms.front().meta,
@@ -231,7 +298,7 @@ void TrtBackend::staticInfer(const std::vector<Image>& inputs) {
         if (infer_config.cuda_mem) {
             for (int idx = 0; idx < num; ++idx) {
                 // 计算 infer_device_ptr，避免重复计算
-                auto infer_device_ptr = static_cast<float*>(tensor_infos.front().buffer->device()) + idx * infer_size_;
+                auto infer_device_ptr = static_cast<float*>(getInputTensorInfo().buffer->device()) + idx * infer_size_;
 
                 void* kernelParams[] = {
                     (void*)&inputs[idx].ptr,
@@ -283,7 +350,7 @@ void TrtBackend::staticInfer(const std::vector<Image>& inputs) {
         for (int idx = 0; idx < num; ++idx) {
             transforms[idx].update(inputs[idx].width, inputs[idx].height, max_shape.w, max_shape.z);
             // 计算 infer_device_ptr，避免重复计算
-            auto infer_device_ptr = static_cast<float*>(tensor_infos.front().buffer->device()) + idx * infer_size_;
+            auto infer_device_ptr = static_cast<float*>(getInputTensorInfo().buffer->device()) + idx * infer_size_;
 
             void* kernelParams[] = {
                 infer_config.cuda_mem ? (void*)&inputs[idx].ptr : (void*)&input_ptr,
@@ -344,7 +411,7 @@ void TrtBackend::dynamicInfer(const std::vector<Image>& inputs) {
                 inputs[idx].width,
                 inputs[idx].height,
                 inputs[idx].pitch,
-                static_cast<float*>(tensor_infos.front().buffer->device()) + idx * infer_size_,
+                static_cast<float*>(getInputTensorInfo().buffer->device()) + idx * infer_size_,
                 max_shape.w,
                 max_shape.z,
                 transforms.front().meta,
@@ -386,7 +453,7 @@ void TrtBackend::dynamicInfer(const std::vector<Image>& inputs) {
                     inputs[idx].width,
                     inputs[idx].height,
                     inputs[idx].pitch,
-                    static_cast<float*>(tensor_infos.front().buffer->device()) + idx * infer_size_,
+                    static_cast<float*>(getInputTensorInfo().buffer->device()) + idx * infer_size_,
                     max_shape.w,
                     max_shape.z,
                     transforms[idx].meta,
@@ -403,7 +470,7 @@ void TrtBackend::dynamicInfer(const std::vector<Image>& inputs) {
                     inputs[idx].width,
                     inputs[idx].height,
                     inputs[idx].pitch,
-                    static_cast<float*>(tensor_infos.front().buffer->device()) + idx * infer_size_,
+                    static_cast<float*>(getInputTensorInfo().buffer->device()) + idx * infer_size_,
                     max_shape.w,
                     max_shape.z,
                     transforms[idx].meta,

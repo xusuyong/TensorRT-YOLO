@@ -129,6 +129,7 @@ public:
             infer_gpu_trace_ = std::make_unique<GpuTimer>(backend_->stream);
             infer_cpu_trace_ = std::make_unique<CpuTimer>();
         }
+        initTensorBindings();
     }
 
     std::unique_ptr<Impl> clone() const {
@@ -136,6 +137,7 @@ public:
         clone_impl->backend_         = backend_->clone();
         clone_impl->infer_gpu_trace_ = std::make_unique<GpuTimer>(clone_impl->backend_->stream);
         clone_impl->infer_cpu_trace_ = std::make_unique<CpuTimer>();
+        clone_impl->initTensorBindings();
         return clone_impl;
     }
 
@@ -206,7 +208,7 @@ public:
 
     // ClassifyModel 的后处理方法实现
     ClassifyRes postProcessClassify(int idx) {
-        auto&  tensor_info = backend_->tensor_infos[1];
+        auto&  tensor_info = backend_->tensor_infos[classify_tensor_idx_ >= 0 ? classify_tensor_idx_ : 1];
         float* topk        = static_cast<float*>(tensor_info.buffer->host()) + idx * tensor_info.shape.d[1] * tensor_info.shape.d[2];
 
         ClassifyRes result;
@@ -224,12 +226,16 @@ public:
 
     // DetectModel 的后处理方法实现
     DetectRes postProcessDetect(int idx) {
-        auto& num_tensor   = backend_->tensor_infos[1];
-        auto& box_tensor   = backend_->tensor_infos[2];
-        auto& score_tensor = backend_->tensor_infos[3];
-        auto& class_tensor = backend_->tensor_infos[4];
+        auto& num_tensor   = backend_->tensor_infos[num_tensor_idx_ >= 0 ? num_tensor_idx_ : 1];
+        auto& box_tensor   = backend_->tensor_infos[box_tensor_idx_ >= 0 ? box_tensor_idx_ : 2];
+        auto& score_tensor = backend_->tensor_infos[score_tensor_idx_ >= 0 ? score_tensor_idx_ : 3];
+        auto& class_tensor = backend_->tensor_infos[class_tensor_idx_ >= 0 ? class_tensor_idx_ : 4];
 
-        int    num     = static_cast<int*>(num_tensor.buffer->host())[idx];
+        int    num      = static_cast<int*>(num_tensor.buffer->host())[idx];
+        int    max_dets = box_tensor.shape.d[1];
+        if (num < 0 || num > max_dets) {
+            num = std::clamp(num, 0, max_dets);
+        }
         float* boxes   = static_cast<float*>(box_tensor.buffer->host()) + idx * box_tensor.shape.d[1] * box_tensor.shape.d[2];
         float* scores  = static_cast<float*>(score_tensor.buffer->host()) + idx * score_tensor.shape.d[1];
         int*   classes = static_cast<int*>(class_tensor.buffer->host()) + idx * class_tensor.shape.d[1];
@@ -264,12 +270,16 @@ public:
 
     // OBBModel 的后处理方法实现
     OBBRes postProcessOBB(int idx) {
-        auto& num_tensor   = backend_->tensor_infos[1];
-        auto& box_tensor   = backend_->tensor_infos[2];
-        auto& score_tensor = backend_->tensor_infos[3];
-        auto& class_tensor = backend_->tensor_infos[4];
+        auto& num_tensor   = backend_->tensor_infos[num_tensor_idx_ >= 0 ? num_tensor_idx_ : 1];
+        auto& box_tensor   = backend_->tensor_infos[box_tensor_idx_ >= 0 ? box_tensor_idx_ : 2];
+        auto& score_tensor = backend_->tensor_infos[score_tensor_idx_ >= 0 ? score_tensor_idx_ : 3];
+        auto& class_tensor = backend_->tensor_infos[class_tensor_idx_ >= 0 ? class_tensor_idx_ : 4];
 
-        int    num     = static_cast<int*>(num_tensor.buffer->host())[idx];
+        int    num      = static_cast<int*>(num_tensor.buffer->host())[idx];
+        int    max_dets = box_tensor.shape.d[1];
+        if (num < 0 || num > max_dets) {
+            num = std::clamp(num, 0, max_dets);
+        }
         float* boxes   = static_cast<float*>(box_tensor.buffer->host()) + idx * box_tensor.shape.d[1] * box_tensor.shape.d[2];
         float* scores  = static_cast<float*>(score_tensor.buffer->host()) + idx * score_tensor.shape.d[1];
         int*   classes = static_cast<int*>(class_tensor.buffer->host()) + idx * class_tensor.shape.d[1];
@@ -305,15 +315,19 @@ public:
 
     // SegmentModel 的后处理方法实现
     SegmentRes postProcessSegment(int idx) {
-        auto& num_tensor   = backend_->tensor_infos[1];
-        auto& box_tensor   = backend_->tensor_infos[2];
-        auto& score_tensor = backend_->tensor_infos[3];
-        auto& class_tensor = backend_->tensor_infos[4];
-        auto& mask_tensor  = backend_->tensor_infos[5];
+        auto& num_tensor   = backend_->tensor_infos[num_tensor_idx_ >= 0 ? num_tensor_idx_ : 1];
+        auto& box_tensor   = backend_->tensor_infos[box_tensor_idx_ >= 0 ? box_tensor_idx_ : 2];
+        auto& score_tensor = backend_->tensor_infos[score_tensor_idx_ >= 0 ? score_tensor_idx_ : 3];
+        auto& class_tensor = backend_->tensor_infos[class_tensor_idx_ >= 0 ? class_tensor_idx_ : 4];
+        auto& mask_tensor  = backend_->tensor_infos[mask_tensor_idx_ >= 0 ? mask_tensor_idx_ : 5];
         int   mask_height  = mask_tensor.shape.d[2];
         int   mask_width   = mask_tensor.shape.d[3];
 
-        int    num     = static_cast<int*>(num_tensor.buffer->host())[idx];
+        int    num      = static_cast<int*>(num_tensor.buffer->host())[idx];
+        int    max_dets = box_tensor.shape.d[1];
+        if (num < 0 || num > max_dets) {
+            num = std::clamp(num, 0, max_dets);
+        }
         float* boxes   = static_cast<float*>(box_tensor.buffer->host()) + idx * box_tensor.shape.d[1] * box_tensor.shape.d[2];
         float* scores  = static_cast<float*>(score_tensor.buffer->host()) + idx * score_tensor.shape.d[1];
         int*   classes = static_cast<int*>(class_tensor.buffer->host()) + idx * class_tensor.shape.d[1];
@@ -357,15 +371,19 @@ public:
 
     // PoseModel 的后处理方法实现
     PoseRes postProcessPose(int idx) {
-        auto& num_tensor   = backend_->tensor_infos[1];
-        auto& box_tensor   = backend_->tensor_infos[2];
-        auto& score_tensor = backend_->tensor_infos[3];
-        auto& class_tensor = backend_->tensor_infos[4];
-        auto& kpt_tensor   = backend_->tensor_infos[5];
+        auto& num_tensor   = backend_->tensor_infos[num_tensor_idx_ >= 0 ? num_tensor_idx_ : 1];
+        auto& box_tensor   = backend_->tensor_infos[box_tensor_idx_ >= 0 ? box_tensor_idx_ : 2];
+        auto& score_tensor = backend_->tensor_infos[score_tensor_idx_ >= 0 ? score_tensor_idx_ : 3];
+        auto& class_tensor = backend_->tensor_infos[class_tensor_idx_ >= 0 ? class_tensor_idx_ : 4];
+        auto& kpt_tensor   = backend_->tensor_infos[kpt_tensor_idx_ >= 0 ? kpt_tensor_idx_ : 5];
         int   nkpt         = kpt_tensor.shape.d[2];
         int   ndim         = kpt_tensor.shape.d[3];
 
-        int    num     = static_cast<int*>(num_tensor.buffer->host())[idx];
+        int    num      = static_cast<int*>(num_tensor.buffer->host())[idx];
+        int    max_dets = box_tensor.shape.d[1];
+        if (num < 0 || num > max_dets) {
+            num = std::clamp(num, 0, max_dets);
+        }
         float* boxes   = static_cast<float*>(box_tensor.buffer->host()) + idx * box_tensor.shape.d[1] * box_tensor.shape.d[2];
         float* scores  = static_cast<float*>(score_tensor.buffer->host()) + idx * score_tensor.shape.d[1];
         int*   classes = static_cast<int*>(class_tensor.buffer->host()) + idx * class_tensor.shape.d[1];
@@ -411,7 +429,7 @@ public:
 
     // SemanticModel 的后处理方法实现
     SemanticRes postProcessSemantic(int idx, int orig_width, int orig_height) {
-        auto& tensor_info = backend_->tensor_infos[1];
+        auto& tensor_info = backend_->tensor_infos[semantic_tensor_idx_ >= 0 ? semantic_tensor_idx_ : 1];
 
         int net_h    = 0;
         int net_w    = 0;
@@ -537,11 +555,102 @@ public:
         return result;
     }
 
+    void initTensorBindings() {
+        if (!backend_ || backend_->tensor_infos.empty()) return;
+
+        auto to_lower = [](std::string s) {
+            std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return s;
+        };
+
+        auto find_idx = [&](const std::vector<std::string>& names, auto pred, int default_idx) -> int {
+            // 1. 优先按名称查找 (非输入张量，不区分大小写匹配)
+            for (int i = 0; i < static_cast<int>(backend_->tensor_infos.size()); ++i) {
+                const auto& t = backend_->tensor_infos[i];
+                if (t.input) continue;
+                std::string ln = to_lower(t.name);
+                for (const auto& n : names) {
+                    if (ln.find(to_lower(n)) != std::string::npos) {
+                        return i;
+                    }
+                }
+            }
+            // 2. 名称对不上时，按 "dtype + rank + shape" 语义兜底推断
+            for (int i = 0; i < static_cast<int>(backend_->tensor_infos.size()); ++i) {
+                const auto& t = backend_->tensor_infos[i];
+                if (t.input) continue;
+                if (pred(t)) {
+                    return i;
+                }
+            }
+            // 3. 历史索引兜底
+            if (default_idx >= 0 && default_idx < static_cast<int>(backend_->tensor_infos.size())) {
+                return default_idx;
+            }
+            return -1;
+        };
+
+        // • int32[B,1] 是 num
+        num_tensor_idx_ = find_idx({"num_dets", "num"}, [](const TensorInfo& t) {
+            return t.dtype() == nvinfer1::DataType::kINT32 &&
+                   ((t.shape.nbDims == 2 && t.shape.d[1] == 1) || t.shape.nbDims == 1);
+        }, 1);
+
+        // • float[B,N,4] 是 boxes (旋转框为 5)
+        box_tensor_idx_ = find_idx({"det_boxes", "boxes", "box"}, [](const TensorInfo& t) {
+            return t.dtype() == nvinfer1::DataType::kFLOAT &&
+                   t.shape.nbDims == 3 && (t.shape.d[2] == 4 || t.shape.d[2] == 5);
+        }, 2);
+
+        // • float[B,N] 是 scores
+        score_tensor_idx_ = find_idx({"det_scores", "scores", "score"}, [](const TensorInfo& t) {
+            return t.dtype() == nvinfer1::DataType::kFLOAT &&
+                   t.shape.nbDims == 2 && t.shape.d[1] > 1;
+        }, 3);
+
+        // • int32[B,N] 是 classes
+        class_tensor_idx_ = find_idx({"det_classes", "classes", "class"}, [](const TensorInfo& t) {
+            return t.dtype() == nvinfer1::DataType::kINT32 &&
+                   t.shape.nbDims == 2 && t.shape.d[1] > 1;
+        }, 4);
+
+        // • float[B,N,K,D] 是 kpts (D 通常为 2 或 3)
+        kpt_tensor_idx_ = find_idx({"det_kpts", "kpts", "keypoint"}, [](const TensorInfo& t) {
+            return t.dtype() == nvinfer1::DataType::kFLOAT &&
+                   t.shape.nbDims == 4 && (t.shape.d[3] == 2 || t.shape.d[3] == 3);
+        }, 5);
+
+        // 分割掩码: float [B, N, H, W] (H, W > 3)
+        mask_tensor_idx_ = find_idx({"det_masks", "masks", "mask", "proto"}, [](const TensorInfo& t) {
+            return t.dtype() == nvinfer1::DataType::kFLOAT &&
+                   t.shape.nbDims == 4 && t.shape.d[3] > 3;
+        }, 5);
+
+        // 语义分割输出: rank 3 或 4
+        semantic_tensor_idx_ = find_idx({"output", "mask", "semantic"}, [](const TensorInfo& t) {
+            return t.shape.nbDims == 3 || t.shape.nbDims == 4;
+        }, 1);
+
+        // 分类 topk / scores: rank 2 或 3
+        classify_tensor_idx_ = find_idx({"topk", "scores", "output"}, [](const TensorInfo& t) {
+            return t.shape.nbDims == 2 || t.shape.nbDims == 3;
+        }, 1);
+    }
+
 private:
     std::unique_ptr<TrtBackend> backend_;           // < TensorRT 后端
     unsigned long long          total_request_{0};  // < 总请求数
     std::unique_ptr<GpuTimer>   infer_gpu_trace_;   // < GPU推理计时器
     std::unique_ptr<CpuTimer>   infer_cpu_trace_;   // < CPU推理计时器
+
+    int num_tensor_idx_ = -1;
+    int box_tensor_idx_ = -1;
+    int score_tensor_idx_ = -1;
+    int class_tensor_idx_ = -1;
+    int kpt_tensor_idx_ = -1;
+    int mask_tensor_idx_ = -1;
+    int semantic_tensor_idx_ = -1;
+    int classify_tensor_idx_ = -1;
 };
 
 BaseModel::BaseModel()  = default;

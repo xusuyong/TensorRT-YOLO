@@ -69,6 +69,10 @@ public:
     int4                    max_shape;     // < 最大形状
     bool                    dynamic;       // < 是否为动态形状
 
+    TensorInfo&             getInputTensorInfo();
+    const TensorInfo&       getInputTensorInfo() const;
+    int                     getInputTensorIndex() const { return input_tensor_index_; }
+
 private:
     void getTensorInfo();
     void initialize();
@@ -85,6 +89,7 @@ private:
 
     int input_size_;                             // < 输入大小
     int infer_size_;                             // < 推理大小
+    int input_tensor_index_ = 0;                 // < 输入张量在 tensor_infos 中的索引
 };
 
 }  // namespace trtyolo
